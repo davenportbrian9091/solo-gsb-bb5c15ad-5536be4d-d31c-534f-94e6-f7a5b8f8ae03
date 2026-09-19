@@ -1,0 +1,22 @@
+services:
+  subtitle-mask:
+    build: .
+    image: subtitle-mask-console:latest
+    container_name: subtitle-mask-console
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    environment:
+      PORT: "3000"
+      DATA_DIR: /app/data
+    volumes:
+      - subtitle-mask-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  subtitle-mask-data:

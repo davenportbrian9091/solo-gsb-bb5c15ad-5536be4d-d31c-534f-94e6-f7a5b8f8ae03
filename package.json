@@ -1,0 +1,21 @@
+{
+  "name": "subtitle-mask-console",
+  "private": true,
+  "version": "1.0.0",
+  "description": "字幕脱敏审校台 - 本机完成的 WebVTT 正则脱敏、优先级合并、逐条撤销与审计导出",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev --workspace server",
+    "dev:web": "npm run dev --workspace web",
+    "build": "npm run build --workspace web && npm run build --workspace server",
+    "start": "npm run start --workspace server",
+    "typecheck": "npm run typecheck --workspace server && npm run typecheck --workspace web",
+    "test:engine": "npm run test --workspace server"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
