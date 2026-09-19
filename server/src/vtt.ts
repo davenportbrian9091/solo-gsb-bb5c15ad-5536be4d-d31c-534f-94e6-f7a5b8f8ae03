@@ -104,6 +104,14 @@ export function parseVtt(input: string): ParsedVtt {
   return { signature, head, cues, errors };
 }
 
+/** 解析 WebVTT 时间码为毫秒；支持 HH:MM:SS.mmm / MM:SS.mmm（逗号小数点兼容） */
+export function parseTimeMs(ts: string): number {
+  const m = ts.trim().match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[.,](\d{3})$/);
+  if (!m) return Number.POSITIVE_INFINITY; // 无法解析时不视为相邻，避免误组窗口
+  const h = m[1] ? Number(m[1]) : 0;
+  return h * 3600000 + Number(m[2]) * 60000 + Number(m[3]) * 1000 + Number(m[4]);
+}
+
 /** 序列化，payload 可逐条替换；时间轴/头部完全保留 */
 export function serializeVtt(
   parsed: ParsedVtt,

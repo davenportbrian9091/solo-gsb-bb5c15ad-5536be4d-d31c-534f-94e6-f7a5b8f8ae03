@@ -12,6 +12,18 @@ export interface MaskRule {
   mode: RuleMode;
   /** 化名模式前缀 */
   aliasPrefix: string;
+  /** 跨 cue 连续扫描：相邻 cue 间隔不超过阈值时拼接扫描 */
+  crossCue?: boolean;
+  /** 跨 cue 最大间隔（毫秒） */
+  crossCueMaxGapMs?: number;
+}
+
+/** 命中落在单条 cue 纯文本上的一个片段（跨 cue 命中有多个） */
+export interface HitSpan {
+  cueIndex: number;
+  start: number;
+  /** 含 */
+  end: number;
 }
 
 /** 稳定化名映射条目（持久化，编号不复用） */
@@ -59,6 +71,8 @@ export interface Hit {
   /** 实体键：NFKC + trim 后的原文（实体决策与稳定化名共用） */
   entityKey: string;
   alias?: string;
+  /** 跨 cue 命中：涉及的全部 cue 与各自被覆盖区间；单 cue 命中无此字段 */
+  spans?: HitSpan[];
 }
 
 export interface SuppressedHit {
@@ -72,6 +86,8 @@ export interface SuppressedHit {
   winnerRuleId: string;
   winnerRuleName: string;
   entityKey: string;
+  /** 跨 cue 抑制项：涉及的全部 cue 与区间 */
+  spans?: HitSpan[];
 }
 
 export interface CueHit {
@@ -82,7 +98,10 @@ export interface CueHit {
   payload: string;
   map: number[];
   text: string;
+  /** 首个覆盖区间落在本 cue 的命中（含跨 cue 命中本体） */
   hits: Hit[];
+  /** 跨 cue 命中在本 cue 的后续覆盖部分（与首个 cue 的命中共用同一 key） */
+  coveringHits: Hit[];
   suppressed: SuppressedHit[];
 }
 
@@ -116,6 +135,8 @@ export interface SafetyScanSegment {
   ruleId?: string;
   ruleName?: string;
   text: string;
+  /** 片段所属 cue（跨 cue 窗口扫描时片段可能分属不同 cue） */
+  cueIndex: number;
 }
 
 /** 二次扫描发现的一条问题（可定位到 cue 与文本区间） */
@@ -133,6 +154,8 @@ export interface SafetyScanIssue {
   sourceRule?: { id: string; name: string };
   /** 命中涉及的来源片段 */
   segments: SafetyScanSegment[];
+  /** 跨 cue 二次命中：涉及的全部 cue 序号（至少 2 个） */
+  cueIndices?: number[];
 }
 
 /** 二次扫描汇总：分类计数 + 问题清单 */
@@ -153,6 +176,8 @@ export interface PreviewResult {
   suppressedHits: number;
   /** 有显式例外的胜出命中数 */
   exceptionHits: number;
+  /** 跨 cue 连续扫描命中的胜出命中数（已计入 totalHits） */
+  crossCueHits: number;
   cues: CueHit[];
   parseErrors: string[];
   aliases: AliasEntry[];
@@ -187,6 +212,10 @@ export interface AuditRecord {
   alias?: string;
   /** 最终状态的决策来源（被抑制命中无此字段） */
   decisionSource?: DecisionSource;
+  /** 跨 cue 命中：涉及的全部 cue（按顺序） */
+  cueIndices?: number[];
+  /** 跨 cue 命中：各 cue 内被覆盖的纯文本区间（含起止） */
+  spans?: HitSpan[];
 }
 
 export interface AuditReport {
@@ -201,6 +230,8 @@ export interface AuditReport {
     revertedHits: number;
     suppressedHits: number;
     exceptionHits: number;
+    /** 跨 cue 连续扫描命中的胜出命中数 */
+    crossCueHits?: number;
   };
   records: AuditRecord[];
   aliases?: AliasEntry[];

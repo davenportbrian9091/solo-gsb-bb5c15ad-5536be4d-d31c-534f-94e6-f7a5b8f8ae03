@@ -24,6 +24,8 @@ export const PRESETS: Preset[] = [
       enabled: true,
       mode: 'template',
       aliasPrefix: '号码',
+      crossCue: true,
+      crossCueMaxGapMs: 2000,
     },
   },
   {
@@ -38,6 +40,8 @@ export const PRESETS: Preset[] = [
       enabled: false,
       mode: 'template',
       aliasPrefix: '号码',
+      crossCue: false,
+      crossCueMaxGapMs: 2000,
     },
   },
   {
@@ -52,6 +56,8 @@ export const PRESETS: Preset[] = [
       enabled: true,
       mode: 'template',
       aliasPrefix: '邮箱',
+      crossCue: false,
+      crossCueMaxGapMs: 2000,
     },
   },
   {
@@ -66,6 +72,8 @@ export const PRESETS: Preset[] = [
       enabled: true,
       mode: 'template',
       aliasPrefix: '证件',
+      crossCue: false,
+      crossCueMaxGapMs: 2000,
     },
   },
   {
@@ -80,6 +88,8 @@ export const PRESETS: Preset[] = [
       enabled: true,
       mode: 'template',
       aliasPrefix: '卡号',
+      crossCue: false,
+      crossCueMaxGapMs: 2000,
     },
   },
   {
@@ -94,6 +104,8 @@ export const PRESETS: Preset[] = [
       enabled: false,
       mode: 'template',
       aliasPrefix: '链接',
+      crossCue: false,
+      crossCueMaxGapMs: 2000,
     },
   },
   {
@@ -109,6 +121,8 @@ export const PRESETS: Preset[] = [
       enabled: true,
       mode: 'template',
       aliasPrefix: '人物',
+      crossCue: false,
+      crossCueMaxGapMs: 2000,
     },
   },
   {
@@ -125,6 +139,8 @@ export const PRESETS: Preset[] = [
       enabled: false,
       mode: 'alias',
       aliasPrefix: '人物',
+      crossCue: false,
+      crossCueMaxGapMs: 2000,
     },
   },
 ];
@@ -140,4 +156,10 @@ export const SAMPLE_VTT = `WEBVTT
 
 00:00:09.500 --> 00:00:14.000
 退款卡号 6222021234567890123 与备用手机 13987654321 均已备注。
+
+00:00:15.000 --> 00:00:17.000
+另外我的另一部号码是137
+
+00:00:17.300 --> 00:00:19.000
+88889999，也请登记。
 `;

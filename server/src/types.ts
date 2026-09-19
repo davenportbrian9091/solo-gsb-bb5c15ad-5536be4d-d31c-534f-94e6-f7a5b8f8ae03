@@ -22,6 +22,10 @@ export interface MaskRule {
   mode: RuleMode;
   /** 化名模式前缀，如「人物」→ 人物1 / 人物2；为空时使用「化名」 */
   aliasPrefix: string;
+  /** 跨 cue 连续扫描：时间相邻且间隔不超过 crossCueMaxGapMs 的 cue 文本拼接扫描 */
+  crossCue?: boolean;
+  /** 跨 cue 模式下相邻 cue 允许的最大间隔（毫秒，相邻 = 前一 cue end → 后一 cue start） */
+  crossCueMaxGapMs?: number;
 }
 
 /**
@@ -73,17 +77,25 @@ export interface HitException {
   state: 'applied' | 'reverted';
 }
 
+/** 命中落在单条 cue 纯文本上的一个片段（start/end 为含起止偏移，跨 cue 命中有多个） */
+export interface HitSpan {
+  cueIndex: number;
+  start: number;
+  /** 含 */
+  end: number;
+}
+
 /** 合并后落到某条字幕上的命中 */
 export interface Hit {
-  /** 稳定标识：cue 序号 + 原文区间 + 规则 id，例外状态据此恢复 */
+  /** 稳定标识：cue 序号 + 原文区间 + 规则 id（跨 cue 命中含全部涉及 cue 的区间），例外状态据此恢复 */
   key: string;
   ruleId: string;
   ruleName: string;
   priority: number;
-  /** 在 cue 纯文本中的起止偏移（含） */
+  /** 在首个涉及 cue 纯文本中的起止偏移（含）；跨 cue 命中完整区间见 spans */
   start: number;
   end: number;
-  /** 原文区间 */
+  /** 原文区间（跨 cue 命中为拼接文本，各 cue 原文间无分隔符） */
   match: string;
   replacement: string;
   /** true 表示最终状态为保留原文（撤销 / 实体保留决定） */
@@ -94,6 +106,8 @@ export interface Hit {
   entityKey: string;
   /** 化名模式：最终化名 */
   alias?: string;
+  /** 跨 cue 连续扫描命中：涉及的全部 cue 与各自被覆盖区间（按 cue 顺序）；单 cue 命中无此字段 */
+  spans?: HitSpan[];
 }
 
 /** 被更高优先级 / 更长命中吞并的重叠命中，仅用于审计 */
@@ -109,6 +123,8 @@ export interface SuppressedHit {
   winnerRuleName: string;
   /** 被抑制命中的实体键（不参与编号分配，也不受实体决定影响） */
   entityKey: string;
+  /** 跨 cue 命中：涉及的全部 cue 与区间；单 cue 命中无此字段 */
+  spans?: HitSpan[];
 }
 
 export interface CueHit {
@@ -120,7 +136,10 @@ export interface CueHit {
   /** 纯文本 -> 原文 payload 的偏移映射 */
   map: number[];
   text: string;
+  /** 首个覆盖区间落在本 cue 的命中（含从本 cue 开始的跨 cue 命中） */
   hits: Hit[];
+  /** 跨 cue 命中在本 cue 的后续覆盖部分（命中本体存储于首个涉及 cue，联动高亮 / 撤销共用同一 key） */
+  coveringHits: Hit[];
   suppressed: SuppressedHit[];
 }
 
@@ -171,6 +190,8 @@ export interface SafetyScanSegment {
   ruleName?: string;
   /** 片段文本 */
   text: string;
+  /** 片段所属 cue（跨 cue 窗口扫描时片段可能分属不同 cue） */
+  cueIndex: number;
 }
 
 /** 二次扫描发现的一条问题（可定位到 cue 与文本区间） */
@@ -189,6 +210,8 @@ export interface SafetyScanIssue {
   sourceRule?: { id: string; name: string };
   /** 命中涉及的来源片段（跨边界时为全部涉及区间） */
   segments: SafetyScanSegment[];
+  /** 跨 cue 二次命中：涉及的全部 cue 序号（按顺序，至少 2 个）；单 cue 问题无此字段 */
+  cueIndices?: number[];
 }
 
 /** 二次扫描汇总：分类计数 + 问题清单 */
@@ -212,6 +235,8 @@ export interface PreviewResult {
   suppressedHits: number;
   /** 有显式例外的胜出命中数 */
   exceptionHits: number;
+  /** 跨 cue 连续扫描命中的胜出命中数（已计入 totalHits） */
+  crossCueHits: number;
   cues: CueHit[];
   parseErrors: string[];
   /** 计算后完整的化名表（已持久条目 + 本次首次命中新建条目） */
@@ -239,13 +264,17 @@ export interface AuditRecord {
   cueId: string;
   time: { start: string; end: string };
   rule: { id: string; name: string; priority: number };
-  /** 原文区间（含纯文本偏移） */
+  /** 原文区间（含纯文本偏移；跨 cue 命中为首个涉及 cue 中的区间，完整覆盖见 spans） */
   source: { start: number; end: number; text: string };
   /** 替换结果 */
   replacement: string;
   status: 'applied' | 'reverted' | 'suppressed';
   /** 被抑制时的胜出规则 */
   suppressedBy?: { id: string; name: string };
+  /** 跨 cue 命中：涉及的全部 cue（按顺序）；单 cue 命中无此字段 */
+  cueIndices?: number[];
+  /** 跨 cue 命中：各 cue 内被覆盖的纯文本区间（含起止）；单 cue 命中无此字段 */
+  spans?: HitSpan[];
   /** 实体键（NFKC + trim 后的原文） */
   entityKey?: string;
   /** 化名模式：最终化名（含手动改名结果） */
@@ -271,6 +300,8 @@ export interface AuditReport {
     suppressedHits: number;
     /** 有显式例外的胜出命中数 */
     exceptionHits: number;
+    /** 跨 cue 连续扫描命中的胜出命中数 */
+    crossCueHits?: number;
   };
   records: AuditRecord[];
   /** 稳定化名表（实体键、最终化名、编号、是否自动生成） */

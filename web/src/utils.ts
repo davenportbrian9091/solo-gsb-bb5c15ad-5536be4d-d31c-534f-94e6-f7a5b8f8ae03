@@ -4,12 +4,26 @@ export function uid(prefix = 'rule'): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** 兼容旧版本规则：补齐稳定化名所需字段 */
+/** 跨 cue 连续扫描缺省最大间隔（毫秒），与服务端 DEFAULT_CROSS_CUE_GAP_MS 保持一致 */
+export const DEFAULT_CROSS_CUE_GAP_MS = 2000;
+
+/** 跨 cue 最大间隔规整：非法 / 缺省回落到默认值，限制在 [0, 3_600_000] */
+export function normalizeCrossCueGap(ms: unknown): number {
+  const n = typeof ms === 'number' ? ms : Number(ms);
+  if (!Number.isFinite(n)) return DEFAULT_CROSS_CUE_GAP_MS;
+  return Math.min(3_600_000, Math.max(0, Math.floor(n)));
+}
+
+/** 兼容旧版本规则：补齐稳定化名与跨 cue 所需字段 */
 export function normalizeRule(rule: MaskRule): MaskRule {
   return {
     ...rule,
     mode: rule.mode === 'alias' ? 'alias' : 'template',
     aliasPrefix: typeof rule.aliasPrefix === 'string' ? rule.aliasPrefix : '',
+    crossCue: rule.crossCue === true,
+    crossCueMaxGapMs: normalizeCrossCueGap(
+      rule.crossCueMaxGapMs ?? DEFAULT_CROSS_CUE_GAP_MS,
+    ),
   };
 }
 

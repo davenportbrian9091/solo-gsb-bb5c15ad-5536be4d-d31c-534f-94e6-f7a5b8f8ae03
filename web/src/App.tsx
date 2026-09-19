@@ -152,12 +152,19 @@ export default function App() {
     setHitExceptions((prev) => prev.filter((e) => e.key !== key));
   }, []);
 
-  /** 全部应用 / 全部撤销：对当前全部胜出命中写入目标状态（与继承一致者清除例外） */
+  /** 全部应用 / 全部撤销：对当前全部胜出命中写入目标状态（与继承一致者清除例外）。
+   *  跨 cue 命中本体存于首个涉及 cue（coveringHits 持同一引用 / key），按 key 去重。 */
   const bulkSet = useCallback(
     (target: 'applied' | 'reverted') => {
       if (!preview) return;
+      const seen = new Set<string>();
       const entries = preview.cues
-        .flatMap((c) => c.hits)
+        .flatMap((c) => [...c.hits, ...c.coveringHits])
+        .filter((h) => {
+          if (seen.has(h.key)) return false;
+          seen.add(h.key);
+          return true;
+        })
         .map((h) => ({ key: h.key, inherited: inheritedState(h, entityDecisions) }));
       setHitExceptions((prev) => withExceptionTarget(prev, entries, target));
     },
@@ -258,7 +265,7 @@ export default function App() {
           <span className="logo">🛡</span>
           <div>
             <h1>字幕脱敏审校台</h1>
-            <p>WebVTT 本机正则脱敏 · 优先级合并 · 实体决策 · 逐条例外 · 稳定化名 · 审计导出</p>
+            <p>WebVTT 本机正则脱敏 · 优先级合并 · 跨 cue 连续扫描 · 实体决策 · 逐条例外 · 稳定化名 · 审计导出</p>
           </div>
         </div>
         <div className="topbar-right">

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { MaskRule, Preset } from '../types';
-import { uid, validateRegex } from '../utils';
+import { uid, validateRegex, DEFAULT_CROSS_CUE_GAP_MS } from '../utils';
 
 interface Props {
   rules: MaskRule[];
@@ -25,6 +25,8 @@ export function RulesPanel({ rules, presets, onChange }: Props) {
       enabled: true,
       mode: 'template',
       aliasPrefix: '化名',
+      crossCue: false,
+      crossCueMaxGapMs: DEFAULT_CROSS_CUE_GAP_MS,
     };
     onChange([...rules, r]);
     setOpenId(r.id);
@@ -70,6 +72,8 @@ export function RulesPanel({ rules, presets, onChange }: Props) {
         模板替换支持 <code>$1</code>、<code>$&amp;</code>、<code>$KEEP:3</code>、
         <code>$MASKALL</code>、<code>$RULE</code>；切到「稳定化名」后同一实体跨 cue
         使用同一编号化名（NFKC 归一 + 去空白建键），增删字幕不重排编号，可在下方化名表改名。
+        开启「跨 cue 连续扫描」后，时间相邻（结束→开始间隔不超阈值）的 cue 文本会拼接扫描，
+        被字幕边界断开的敏感串仍可命中；替换写入首个 cue、后续 cue 覆盖字符删除。
       </p>
 
       <ul className="rule-list">
@@ -94,6 +98,14 @@ export function RulesPanel({ rules, presets, onChange }: Props) {
                   {r.mode === 'alias' && (
                     <span className="mode-badge mode-alias" title="稳定化名模式">
                       化名
+                    </span>
+                  )}
+                  {r.crossCue && (
+                    <span
+                      className="mode-badge mode-crosscue"
+                      title={`跨 cue 连续扫描：最大间隔 ${r.crossCueMaxGapMs ?? DEFAULT_CROSS_CUE_GAP_MS}ms`}
+                    >
+                      跨cue
                     </span>
                   )}
                   {err && <span className="rule-err-dot" title={err}>!</span>}
@@ -181,6 +193,37 @@ export function RulesPanel({ rules, presets, onChange }: Props) {
                       />
                     </label>
                   )}
+                  <div className="rule-crosscue">
+                    <span className="field-label">跨 cue 连续扫描</span>
+                    <label className={`mode-option ${r.crossCue ? 'active' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={r.crossCue === true}
+                        onChange={(e) => update(r.id, { crossCue: e.target.checked })}
+                      />
+                      开启：拼接时间相邻 cue 扫描被字幕断开的敏感串
+                    </label>
+                    {r.crossCue && (
+                      <label className="crossgap-field">
+                        最大间隔（毫秒）
+                        <input
+                          type="number"
+                          min={0}
+                          max={3_600_000}
+                          step={100}
+                          value={r.crossCueMaxGapMs ?? DEFAULT_CROSS_CUE_GAP_MS}
+                          onChange={(e) =>
+                            update(r.id, {
+                              crossCueMaxGapMs: Math.max(0, Number(e.target.value) || 0),
+                            })
+                          }
+                        />
+                        <span className="crossgap-hint">
+                          前一 cue 结束 → 后一 cue 开始的间隔不超过该值才拼接（0 = 必须首尾相接）
+                        </span>
+                      </label>
+                    )}
+                  </div>
                 </div>
               )}
             </li>

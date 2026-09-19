@@ -69,7 +69,7 @@ test('逐条撤销：key 稳定且导出恢复原文', () => {
   const v1 = buildPreview({ vtt: SAMPLE_VTT, rules });
   const key = v1.cues[0].hits[0].key;
   const v2 = buildPreview({ vtt: SAMPLE_VTT, rules, revertedKeys: [key] });
-  assert.strictEqual(v2.appliedHits, 1);
+  assert.strictEqual(v2.appliedHits, v2.totalHits - 1);
   assert.strictEqual(v2.revertedHits, 1);
   const ex = exportResult({ vtt: SAMPLE_VTT, rules, revertedKeys: [key] });
   assert.ok(!ex.vtt.includes('138****5678'), '撤销号码应保持原文');
@@ -425,7 +425,7 @@ test('实体决策：审计记录决策来源，导出与预览状态一致', ()
   const recs = ex.audit.records.filter((r) => r.entityKey === '张伟');
   assert.ok(recs.some((r) => r.status === 'applied' && r.decisionSource === 'exception'));
   assert.ok(recs.some((r) => r.status === 'reverted' && r.decisionSource === 'entity'));
-  assert.strictEqual(ex.audit.version, 4);
+  assert.strictEqual(ex.audit.version, 5);
   assert.strictEqual(ex.audit.stats.exceptionHits, 1);
   assert.ok(ex.audit.entityDecisions!.some((d) => d.entityKey === '张伟' && d.action === 'keep'));
   // 导出 VTT 与预览最终状态一致：例外处替换，其余保留
@@ -699,6 +699,258 @@ test('残留防线：示例字幕默认规则下无残留问题', () => {
   assert.strictEqual(v.safety.blocked, false);
   const ex = exportResult({ vtt: SAMPLE_VTT, rules });
   assert.deepStrictEqual(ex.audit.safetyScan.counts, { kept: 0, artifact: 0, crossBoundary: 0 });
+});
+
+/* ---------------------------- 跨 cue 连续扫描 ---------------------------- */
+
+const CROSS_PHONE_VTT = `WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+我的手机号是138
+
+00:00:02.050 --> 00:00:04.000
+12345678 请记录。
+`;
+
+const CROSS_PHONE_VTT_FAR = `WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+我的手机号是138
+
+00:00:05.000 --> 00:00:07.000
+12345678 请记录。
+`;
+
+/** 跨 cue：间隔不超阈值时被 cue 边界断开的敏感串仍能命中，区间映射回各 cue */
+test('跨 cue：间隔不超阈值命中断开的手机号，spans 映射回各 cue 偏移', () => {
+  const rule = { ...presetRule('手机号'), crossCue: true, crossCueMaxGapMs: 2000 };
+  const v = buildPreview({ vtt: CROSS_PHONE_VTT, rules: [rule] });
+  assert.strictEqual(v.totalHits, 1);
+  assert.strictEqual(v.crossCueHits, 1);
+  const h = v.cues[0].hits[0];
+  assert.strictEqual(h.match, '13812345678');
+  assert.strictEqual(h.replacement, '138****5678');
+  assert.deepStrictEqual(h.spans, [
+    { cueIndex: 0, start: 6, end: 8 },
+    { cueIndex: 1, start: 0, end: 7 },
+  ]);
+  // 后续 cue 通过 coveringHits 引用同一命中对象（同一 key）
+  assert.strictEqual(v.cues[1].coveringHits.length, 1);
+  assert.strictEqual(v.cues[1].coveringHits[0].key, h.key);
+  assert.strictEqual(v.cues[1].hits.length, 0);
+
+  // 应用：替换写入首个 cue，后续 cue 覆盖字符删除，时间 / 标识 / 其余文字保留
+  const ex = exportResult({ vtt: CROSS_PHONE_VTT, rules: [rule] });
+  assert.ok(ex.vtt.includes('我的手机号是138****5678'));
+  assert.ok(!ex.vtt.includes('12345678'), '后续 cue 被覆盖字符应删除');
+  assert.ok(ex.vtt.includes(' 请记录。'));
+  assert.ok(ex.vtt.includes('00:00:02.050 --> 00:00:04.000'));
+  const rec = ex.audit.records.find((r) => r.cueIndices)!;
+  assert.deepStrictEqual(rec.cueIndices, [0, 1]);
+  assert.deepStrictEqual(rec.spans, h.spans);
+  assert.strictEqual(ex.audit.stats.crossCueHits, 1);
+});
+
+/** 跨 cue：间隔超过阈值时不拼接，断开串不命中 */
+test('跨 cue：间隔超阈值不组窗口，断开串不命中', () => {
+  const rule = { ...presetRule('手机号'), crossCue: true, crossCueMaxGapMs: 2000 };
+  const v = buildPreview({ vtt: CROSS_PHONE_VTT_FAR, rules: [rule] });
+  assert.strictEqual(v.totalHits, 0);
+  assert.strictEqual(v.crossCueHits, 0);
+});
+
+/** 跨 cue：未开启时即使间隔为 0 也不跨 cue 命中 */
+test('跨 cue：未开启跨 cue 模式时断开串不命中', () => {
+  const rule = { ...presetRule('手机号'), crossCue: false };
+  const v = buildPreview({ vtt: CROSS_PHONE_VTT, rules: [rule] });
+  assert.strictEqual(v.totalHits, 0);
+});
+
+/** 跨 cue：阈值边界（gap == maxGapMs 视为相邻；超出 1ms 断开） */
+test('跨 cue：阈值边界判定（等于阈值相邻）', () => {
+  // 00:00:02.000 end → 00:00:02.100 start = 100ms
+  const vtt = `WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+电话138
+
+00:00:02.100 --> 00:00:04.000
+12345678
+`;
+  const rule = { ...presetRule('手机号'), crossCue: true, crossCueMaxGapMs: 100 };
+  assert.strictEqual(buildPreview({ vtt, rules: [rule] }).totalHits, 1);
+  const vttFar = vtt.replace('00:00:02.100', '00:00:02.101');
+  assert.strictEqual(buildPreview({ vtt: vttFar, rules: [rule] }).totalHits, 0);
+});
+
+/** 跨 cue：与单 cue 命中按现有优先级 / 长度规则统一消解重叠 */
+test('跨 cue：跨 cue 命中与高优先级命中重叠时被抑制', () => {
+  const cross: MaskRule = {
+    id: 'x1',
+    name: '跨段数字',
+    pattern: '\\d{6,}',
+    flags: 'g',
+    replacement: '[号]',
+    priority: 10,
+    enabled: true,
+    mode: 'template',
+    aliasPrefix: '',
+    crossCue: true,
+    crossCueMaxGapMs: 2000,
+  };
+  const phoneCross = {
+    ...presetRule('手机号'),
+    id: 's1',
+    name: '整段手机号',
+    priority: 50,
+    crossCue: true,
+    crossCueMaxGapMs: 2000,
+  };
+  const v = buildPreview({ vtt: CROSS_PHONE_VTT, rules: [cross, phoneCross] });
+  // 跨段数字（10）与跨 cue 手机号（50）在拼接文本中覆盖同一区间：低优先级跨 cue 命中被抑制
+  assert.strictEqual(v.cues[0].hits.length, 1);
+  assert.strictEqual(v.cues[0].hits[0].ruleId, 's1');
+  const sup = v.cues[0].suppressed.find((s) => s.ruleId === 'x1');
+  assert.ok(sup, '跨 cue 低优先级命中应被抑制');
+  assert.deepStrictEqual(sup!.spans, [
+    { cueIndex: 0, start: 6, end: 8 },
+    { cueIndex: 1, start: 0, end: 7 },
+  ]);
+  assert.strictEqual(sup!.winnerRuleName, '整段手机号');
+
+  // 反向：跨 cue 手机号优先级更高时，单 cue 内的短数字命中被抑制
+  const short: MaskRule = {
+    id: 'd2',
+    name: '短数字',
+    pattern: '138',
+    flags: 'g',
+    replacement: '###',
+    priority: 5,
+    enabled: true,
+    mode: 'template',
+    aliasPrefix: '',
+  };
+  const v2 = buildPreview({ vtt: CROSS_PHONE_VTT, rules: [phoneCross, short] });
+  assert.strictEqual(v2.cues[0].hits[0].ruleId, 's1');
+  assert.ok(v2.cues[0].suppressed.some((s) => s.ruleId === 'd2'));
+});
+
+/** 跨 cue：逐条例外按统一 key 联动全部涉及 cue 撤销 / 恢复 */
+test('跨 cue：一个命中在涉及 cue 联动撤销与应用，恢复后重新脱敏', () => {
+  const rule = { ...presetRule('手机号'), crossCue: true, crossCueMaxGapMs: 2000 };
+  const v1 = buildPreview({ vtt: CROSS_PHONE_VTT, rules: [rule] });
+  const h = v1.cues[0].hits[0];
+  const v2 = buildPreview({
+    vtt: CROSS_PHONE_VTT,
+    rules: [rule],
+    hitExceptions: [{ key: h.key, state: 'reverted' }],
+  });
+  const h2 = v2.cues[0].hits[0];
+  assert.ok(h2.reverted && h2.decisionSource === 'exception');
+  // 后续 cue 的联动部分也是同一撤销态
+  assert.strictEqual(v2.cues[1].coveringHits[0].reverted, true);
+  const ex = exportResult({
+    vtt: CROSS_PHONE_VTT,
+    rules: [rule],
+    hitExceptions: [{ key: h.key, state: 'reverted' }],
+  });
+  assert.ok(ex.vtt.includes('我的手机号是138'), '撤销后首 cue 恢复原文');
+  assert.ok(ex.vtt.includes('12345678 请记录。'), '撤销后后续 cue 覆盖字符恢复');
+  assert.ok(!ex.vtt.includes('138****5678'));
+
+  // 写入 applied 例外（与默认继承一致；冗余例外的自动清除由前端 withExceptionTarget 负责）：
+  // 命中回到应用态
+  const v3 = buildPreview({
+    vtt: CROSS_PHONE_VTT,
+    rules: [rule],
+    hitExceptions: [{ key: h.key, state: 'applied' }],
+  });
+  assert.strictEqual(v3.cues[0].hits[0].reverted, false);
+  assert.strictEqual(v3.cues[1].coveringHits[0].reverted, false);
+});
+
+/** 跨 cue：稳定化名跨 cue 同一编号，删除后续 cue 字符 */
+test('跨 cue：稳定化名命中断开姓名，替换写入首 cue 并删除后续字符', () => {
+  const rule: MaskRule = {
+    id: 'al',
+    ...PRESETS.find((p) => p.rule.name === '姓名-稳定化名')!.rule,
+    enabled: true,
+    crossCue: true,
+    crossCueMaxGapMs: 2000,
+  };
+  // 姓名规则要求名字后紧跟称谓；把「张」与「伟先生」拆到相邻两 cue
+  const vtt = `WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+请问张
+
+00:00:02.050 --> 00:00:04.000
+伟先生在吗
+`;
+  const v = buildPreview({ vtt, rules: [rule] });
+  assert.strictEqual(v.totalHits, 1);
+  const h = v.cues[0].hits[0];
+  assert.strictEqual(h.match, '张伟');
+  assert.strictEqual(h.alias, '人物1');
+  assert.deepStrictEqual(h.spans, [
+    { cueIndex: 0, start: 2, end: 2 },
+    { cueIndex: 1, start: 0, end: 0 },
+  ]);
+  const ex = exportResult({ vtt, rules: [rule] });
+  assert.ok(ex.vtt.includes('请问人物1'));
+  assert.ok(ex.vtt.includes('先生在吗'), '后续 cue 仅删除被覆盖的「伟」，其余文字保留');
+});
+
+/** 跨 cue：残留防线对窗口候选文本二次扫描，跨边界拼接命中阻断导出 */
+test('跨 cue：残留防线按窗口扫描，跨 cue 拼接的敏感串阻断导出', () => {
+  const dash: MaskRule = {
+    id: 'dash',
+    name: '去分隔符',
+    pattern: '-',
+    flags: 'g',
+    replacement: '',
+    priority: 90,
+    enabled: true,
+    mode: 'template',
+    aliasPrefix: '',
+    crossCue: true,
+    crossCueMaxGapMs: 2000,
+  };
+  const phone = { ...presetRule('手机号'), crossCue: true, crossCueMaxGapMs: 2000 };
+  // 「138-」在首 cue，「12345678」在次 cue：去分隔符（跨 cue 规则）后窗口拼出手机号
+  const vtt = `WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+电话 138-
+
+00:00:02.050 --> 00:00:04.000
+12345678 已登记
+`;
+  const v = buildPreview({ vtt, rules: [dash, phone] });
+  const issue = v.safety.issues.find((i) => i.cueIndices && i.cueIndices.length > 1);
+  assert.ok(issue, '应有跨 cue 残留问题');
+  assert.strictEqual(issue!.match, '13812345678');
+  assert.strictEqual(issue!.rule.name, '手机号');
+  assert.deepStrictEqual(issue!.cueIndices, [0, 1]);
+  assert.strictEqual(v.safety.blocked, true);
+  assert.throws(() => exportResult({ vtt, rules: [dash, phone] }), SafetyScanBlockedError);
+});
+
+/** 跨 cue：残留防线中跨 cue 保留命中（撤销）归为人工保留，仅提示不阻断 */
+test('跨 cue：残留防线跨 cue 的人工保留仅提示', () => {
+  const rule = { ...presetRule('手机号'), crossCue: true, crossCueMaxGapMs: 2000 };
+  const v1 = buildPreview({ vtt: CROSS_PHONE_VTT, rules: [rule] });
+  const key = v1.cues[0].hits[0].key;
+  const v2 = buildPreview({
+    vtt: CROSS_PHONE_VTT,
+    rules: [rule],
+    hitExceptions: [{ key, state: 'reverted' }],
+  });
+  const issue = v2.safety.issues.find((i) => i.cueIndices && i.cueIndices.length > 1);
+  assert.ok(issue, '撤销后窗口候选文本仍含原手机号，应被二次命中');
+  assert.strictEqual(issue!.kind, 'kept');
+  assert.strictEqual(v2.safety.blocked, false);
+  assert.ok(issue!.segments.every((s) => s.source === 'reverted'));
 });
 
 console.log(`\n引擎自测全部通过（${passed} 项）`);

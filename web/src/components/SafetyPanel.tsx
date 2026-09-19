@@ -30,15 +30,20 @@ function IssueDetail({ issue }: { issue: SafetyScanIssue }) {
   if (issue.kind === 'crossBoundary') {
     return (
       <div className="safety-detail">
-        <div>命中跨越 {issue.segments.length} 个来源片段（替换改变了边界上下文）：</div>
+        <div>
+          命中跨越 {issue.segments.length} 个来源片段（{issue.cueIndices && issue.cueIndices.length > 1
+            ? `跨 ${issue.cueIndices.length} 条 cue（${issue.cueIndices.map((i) => `#${i + 1}`).join(' → ')}）、`
+            : ''}
+          替换改变了边界上下文）：
+        </div>
         <div className="safety-segments">
           {issue.segments.map((s, i) => (
             <span
               key={i}
               className={`safety-seg safety-seg-${s.source}`}
-              title={`${SOURCE_LABEL[s.source]}${s.ruleName ? ` · 规则「${s.ruleName}」` : ''} · 候选文本 [${s.start}, ${s.end})`}
+              title={`字幕 #${s.cueIndex + 1} · ${SOURCE_LABEL[s.source]}${s.ruleName ? ` · 规则「${s.ruleName}」` : ''} · 候选文本 [${s.start}, ${s.end})`}
             >
-              <em>{SOURCE_LABEL[s.source]}</em>
+              <em>#{s.cueIndex + 1} {SOURCE_LABEL[s.source]}</em>
               {s.text === '' ? '（空）' : `「${s.text}」`}
             </span>
           ))}
@@ -113,6 +118,16 @@ export function SafetyPanel({ safety, onLocate }: Props) {
                 <div key={i} className={`safety-issue ${meta.cls}`}>
                   <div className="safety-issue-head">
                     <span className={`safety-kind ${meta.cls}`}>{meta.label}</span>
+                    {issue.cueIndices && issue.cueIndices.length > 1 && (
+                      <span
+                        className="safety-crosscue-tag"
+                        title={`跨 cue 窗口二次命中，涉及字幕 ${issue.cueIndices
+                          .map((c) => `#${c + 1}`)
+                          .join(' → ')}`}
+                      >
+                        跨cue {issue.cueIndices.map((c) => `#${c + 1}`).join('→')}
+                      </span>
+                    )}
                     <span className="safety-rule">目标规则「{issue.rule.name}」</span>
                     <code className="safety-match" title={`候选文本 [${issue.start}, ${issue.end})`}>
                       {issue.match}
