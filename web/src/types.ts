@@ -12,6 +12,10 @@ export interface MaskRule {
   mode: RuleMode;
   /** 化名模式前缀 */
   aliasPrefix: string;
+  /** 跨 cue 连续扫描：相邻（间隔 ≤ maxCueGapMs）字幕拼成扫描窗口 */
+  crossCue: boolean;
+  /** 跨 cue 模式的最大相邻间隔毫秒数 */
+  maxCueGapMs: number;
 }
 
 /** 稳定化名映射条目（持久化，编号不复用） */
@@ -44,11 +48,20 @@ export interface HitException {
   state: 'applied' | 'reverted';
 }
 
+/** 命中在某条 cue 纯文本中的覆盖区间（跨 cue 命中按 cue 顺序排列） */
+export interface HitSpan {
+  cueIndex: number;
+  /** 起止偏移（end 含） */
+  start: number;
+  end: number;
+}
+
 export interface Hit {
   key: string;
   ruleId: string;
   ruleName: string;
   priority: number;
+  /** 在锚定 cue（spans 首个涉及 cue）纯文本中的起止偏移（含） */
   start: number;
   end: number;
   match: string;
@@ -59,6 +72,8 @@ export interface Hit {
   /** 实体键：NFKC + trim 后的原文（实体决策与稳定化名共用） */
   entityKey: string;
   alias?: string;
+  /** 涉及的全部 cue 及各自覆盖区间（跨 cue 命中多于一个） */
+  spans: HitSpan[];
 }
 
 export interface SuppressedHit {
@@ -72,6 +87,8 @@ export interface SuppressedHit {
   winnerRuleId: string;
   winnerRuleName: string;
   entityKey: string;
+  /** 涉及的全部 cue 及各自覆盖区间 */
+  spans: HitSpan[];
 }
 
 export interface CueHit {
@@ -116,13 +133,18 @@ export interface SafetyScanSegment {
   ruleId?: string;
   ruleName?: string;
   text: string;
+  /** 跨 cue 二次命中时标注片段所属 cue */
+  cueIndex?: number;
 }
 
 /** 二次扫描发现的一条问题（可定位到 cue 与文本区间） */
 export interface SafetyScanIssue {
+  /** 锚定 cue（首个涉及 cue）序号 */
   cueIndex: number;
   cueId: string;
   time: { start: string; end: string };
+  /** 涉及的全部 cue 序号（跨 cue 二次命中多于一个） */
+  cueIndexes: number[];
   /** 二次命中的目标规则 */
   rule: { id: string; name: string };
   start: number;
@@ -178,10 +200,14 @@ export interface AuditRecord {
   cueIndex: number;
   cueId: string;
   time: { start: string; end: string };
+  /** 涉及的全部 cue 序号（跨 cue 命中多于一个） */
+  cueIndexes: number[];
   rule: { id: string; name: string; priority: number };
   source: { start: number; end: number; text: string };
   replacement: string;
   status: 'applied' | 'reverted' | 'suppressed';
+  /** 与预览一致的稳定命中键（被抑制命中无此字段） */
+  key?: string;
   suppressedBy?: { id: string; name: string };
   entityKey?: string;
   alias?: string;

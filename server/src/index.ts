@@ -48,6 +48,15 @@ function validateRules(rules: unknown): MaskRule[] | string {
       return `规则 ${rule.id} 替换模式非法`;
     if (rule.aliasPrefix !== undefined && typeof rule.aliasPrefix !== 'string')
       return `规则 ${rule.id} 化名前缀必须是字符串`;
+    if (rule.crossCue !== undefined && typeof rule.crossCue !== 'boolean')
+      return `规则 ${rule.id} crossCue 必须是布尔值`;
+    if (
+      rule.maxCueGapMs !== undefined &&
+      (typeof rule.maxCueGapMs !== 'number' ||
+        !Number.isFinite(rule.maxCueGapMs) ||
+        rule.maxCueGapMs < 0)
+    )
+      return `规则 ${rule.id} 跨 cue 最大间隔必须是非负数字`;
     const normalized = normalizeRule(rule as unknown as MaskRule);
     try {
       new RegExp(normalized.pattern, normalized.flags);

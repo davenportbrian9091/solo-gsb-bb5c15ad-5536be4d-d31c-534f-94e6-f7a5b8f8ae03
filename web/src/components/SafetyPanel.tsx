@@ -19,9 +19,14 @@ const SOURCE_LABEL: Record<SafetyScanSegment['source'], string> = {
 };
 
 function IssueDetail({ issue }: { issue: SafetyScanIssue }) {
+  const crossNote =
+    issue.cueIndexes.length > 1
+      ? `该命中横跨字幕 ${issue.cueIndexes.map((c) => `#${c + 1}`).join('、')}（跨 cue 连续扫描窗口）。`
+      : '';
   if (issue.kind === 'artifact') {
     return (
       <div className="safety-detail">
+        {crossNote}
         完全落在来源规则「{issue.sourceRule?.name ?? '未知'}」的替换产物内，被目标规则「
         {issue.rule.name}」再次命中。请调整来源规则的替换模板 / 化名，或撤销该处替换改为人为保留。
       </div>
@@ -30,15 +35,21 @@ function IssueDetail({ issue }: { issue: SafetyScanIssue }) {
   if (issue.kind === 'crossBoundary') {
     return (
       <div className="safety-detail">
+        {crossNote}
         <div>命中跨越 {issue.segments.length} 个来源片段（替换改变了边界上下文）：</div>
         <div className="safety-segments">
           {issue.segments.map((s, i) => (
             <span
               key={i}
               className={`safety-seg safety-seg-${s.source}`}
-              title={`${SOURCE_LABEL[s.source]}${s.ruleName ? ` · 规则「${s.ruleName}」` : ''} · 候选文本 [${s.start}, ${s.end})`}
+              title={`${SOURCE_LABEL[s.source]}${s.ruleName ? ` · 规则「${s.ruleName}」` : ''} · ${
+                s.cueIndex !== undefined ? `字幕 #${s.cueIndex + 1} · ` : ''
+              }候选文本 [${s.start}, ${s.end})`}
             >
-              <em>{SOURCE_LABEL[s.source]}</em>
+              <em>
+                {s.cueIndex !== undefined ? `#${s.cueIndex + 1} ` : ''}
+                {SOURCE_LABEL[s.source]}
+              </em>
               {s.text === '' ? '（空）' : `「${s.text}」`}
             </span>
           ))}
@@ -51,6 +62,7 @@ function IssueDetail({ issue }: { issue: SafetyScanIssue }) {
   ) as string[];
   return (
     <div className="safety-detail">
+      {crossNote}
       命中与人工保留的原文重叠（{keptRules.map((n) => `「${n}」`).join('、') || '保留命中'}
       ），残留源于显式保留决定，仅提示、不阻断导出。
     </div>
@@ -106,6 +118,14 @@ export function SafetyPanel({ safety, onLocate }: Props) {
               <span className="mono">
                 字幕 #{cueIndex + 1} · {issues[0].time.start} → {issues[0].time.end}
               </span>
+              {issues.some((i) => i.cueIndexes.length > 1) && (
+                <span
+                  className="safety-cross-tag"
+                  title="含跨 cue 连续扫描发现的命中：敏感串横跨多条相邻字幕"
+                >
+                  跨cue
+                </span>
+              )}
             </div>
             {issues.map((issue, i) => {
               const meta = KIND_META[issue.kind];

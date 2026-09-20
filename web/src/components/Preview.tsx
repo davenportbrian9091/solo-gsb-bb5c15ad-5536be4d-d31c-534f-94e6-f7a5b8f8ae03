@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import type { CueHit, Hit, PreviewResult } from '../types';
+import type { CueHit, Hit, HitSpan, PreviewResult } from '../types';
 import { SafetyPanel } from './SafetyPanel';
 
 interface Props {
@@ -11,15 +11,28 @@ interface Props {
   onApplyAll: () => void;
 }
 
-/** 将 cue 纯文本按命中切分为片段 */
+/** 命中在本 cue 内的覆盖区间（跨 cue 命中按 spans 定位本 cue 部分） */
+function localSpan(hit: Hit, cueIndex: number): HitSpan {
+  return (
+    hit.spans.find((s) => s.cueIndex === cueIndex) ?? {
+      cueIndex,
+      start: hit.start,
+      end: hit.end,
+    }
+  );
+}
+
+/** 将 cue 纯文本按命中切分为片段（跨 cue 命中按本 cue 覆盖区间切分） */
 function segments(cue: CueHit): { text: string; hit?: Hit }[] {
   const out: { text: string; hit?: Hit }[] = [];
   let pos = 0;
-  const sorted = [...cue.hits].sort((a, b) => a.start - b.start);
-  for (const h of sorted) {
-    if (h.start > pos) out.push({ text: cue.text.slice(pos, h.start) });
-    out.push({ text: cue.text.slice(h.start, h.end + 1), hit: h });
-    pos = h.end + 1;
+  const sorted = cue.hits
+    .map((h) => ({ h, span: localSpan(h, cue.index) }))
+    .sort((a, b) => a.span.start - b.span.start);
+  for (const { h, span } of sorted) {
+    if (span.start > pos) out.push({ text: cue.text.slice(pos, span.start) });
+    out.push({ text: cue.text.slice(span.start, span.end + 1), hit: h });
+    pos = span.end + 1;
   }
   if (pos < cue.text.length) out.push({ text: cue.text.slice(pos) });
   return out;
@@ -28,11 +41,16 @@ function segments(cue: CueHit): { text: string; hit?: Hit }[] {
 function CueCard({
   cue,
   flash,
+  linkedKey,
+  onHoverHit,
   onToggleHit,
   onClearException,
 }: {
   cue: CueHit;
   flash: boolean;
+  /** 当前悬停命中的 key：同一跨 cue 命中在所有涉及 cue 联动高亮 */
+  linkedKey: string | null;
+  onHoverHit: (key: string | null) => void;
   onToggleHit: (k: string) => void;
   onClearException: (k: string) => void;
 }) {
@@ -45,21 +63,36 @@ function CueCard({
         {cue.end}
       </div>
       <div className="cue-text">
-        {segs.map((s, i) =>
-          s.hit ? (
+        {segs.map((s, i) => {
+          if (!s.hit) return <span key={i}>{s.text}</span>;
+          const hit = s.hit;
+          const isCross = hit.spans.length > 1;
+          const isAnchor = hit.spans[0].cueIndex === cue.index;
+          const cueList = hit.spans.map((sp) => `#${sp.cueIndex + 1}`).join('、');
+          return (
             <span
               key={i}
-              className={`hit ${s.hit.reverted ? 'hit-reverted' : 'hit-applied'} ${
-                s.hit.alias !== undefined ? 'hit-alias' : ''
-              }`}
+              className={`hit ${hit.reverted ? 'hit-reverted' : 'hit-applied'} ${
+                hit.alias !== undefined ? 'hit-alias' : ''
+              } ${isCross ? 'hit-cross' : ''} ${linkedKey === hit.key ? 'hit-linked' : ''}`}
+              onMouseEnter={isCross ? () => onHoverHit(hit.key) : undefined}
+              onMouseLeave={isCross ? () => onHoverHit(null) : undefined}
               title={
-                s.hit.alias !== undefined
-                  ? `${s.hit.ruleName}（稳定化名，优先级 ${s.hit.priority}）\n原文：${s.hit.match}\n实体键：${s.hit.entityKey}\n化名：${s.hit.alias}`
-                  : `${s.hit.ruleName}（优先级 ${s.hit.priority}）\n原文：${s.hit.match}\n替换：${s.hit.replacement}\n实体键：${s.hit.entityKey}`
+                (hit.alias !== undefined
+                  ? `${hit.ruleName}（稳定化名，优先级 ${hit.priority}）\n原文：${hit.match}\n实体键：${hit.entityKey}\n化名：${hit.alias}`
+                  : `${hit.ruleName}（优先级 ${hit.priority}）\n原文：${hit.match}\n替换：${hit.replacement}\n实体键：${hit.entityKey}`) +
+                (isCross
+                  ? `\n跨 cue 命中：涉及字幕 ${cueList}；替换写入 #${hit.spans[0].cueIndex + 1}，其余涉及字幕的被覆盖字符删除`
+                  : '')
               }
             >
-              <span className="hit-label">{s.hit.ruleName}</span>
-              {s.hit.decisionSource === 'entity' && (
+              <span className="hit-label">{hit.ruleName}</span>
+              {isCross && (
+                <span className="hit-cross-badge" title={`跨 cue 命中，涉及字幕 ${cueList}`}>
+                  跨cue
+                </span>
+              )}
+              {hit.decisionSource === 'entity' && (
                 <span
                   className="hit-src hit-src-entity"
                   title="继承实体决定（可在左侧「实体决策」面板调整）"
@@ -67,7 +100,7 @@ function CueCard({
                   实体
                 </span>
               )}
-              {s.hit.decisionSource === 'exception' && (
+              {hit.decisionSource === 'exception' && (
                 <span
                   className="hit-src hit-src-exception"
                   title="逐条例外：显式覆盖实体决定"
@@ -75,43 +108,57 @@ function CueCard({
                   例外
                 </span>
               )}
-              {s.hit.reverted ? (
+              {hit.reverted ? (
                 <span className="hit-original">{s.text}</span>
+              ) : isAnchor ? (
+                <span className="hit-replacement">{hit.replacement}</span>
               ) : (
-                <span className="hit-replacement">{s.hit.replacement}</span>
+                <span
+                  className="hit-cross-tail"
+                  title={`这些字符属于跨 cue 命中，替换文本已写入字幕 #${hit.spans[0].cueIndex + 1}，导出时此处字符删除`}
+                >
+                  {s.text}
+                </span>
               )}
               <button
                 className="hit-toggle"
-                onClick={() => onToggleHit(s.hit!.key)}
+                onClick={() => onToggleHit(hit.key)}
                 title={
-                  s.hit.reverted
+                  hit.reverted
                     ? '应用此替换（写入逐条例外）'
                     : '撤销此替换，恢复原文（写入逐条例外）'
                 }
               >
-                {s.hit.reverted ? '↩ 应用' : '↶ 撤销'}
+                {hit.reverted ? '↩ 应用' : '↶ 撤销'}
               </button>
-              {s.hit.decisionSource === 'exception' && (
+              {hit.decisionSource === 'exception' && (
                 <button
                   className="hit-toggle hit-inherit"
-                  onClick={() => onClearException(s.hit!.key)}
+                  onClick={() => onClearException(hit.key)}
                   title="清除此命中的例外，恢复继承实体决定（或默认应用）"
                 >
                   ⟲ 继承
                 </button>
               )}
             </span>
-          ) : (
-            <span key={i}>{s.text}</span>
-          ),
-        )}
+          );
+        })}
       </div>
       {cue.suppressed.length > 0 && (
         <div className="suppressed">
           重叠抑制：
           {cue.suppressed.map((s, i) => (
-            <span key={i} className="suppressed-chip" title={`原文：${s.match}`}>
+            <span
+              key={i}
+              className="suppressed-chip"
+              title={`原文：${s.match}${
+                s.spans.length > 1
+                  ? `（跨 cue，涉及字幕 ${s.spans.map((sp) => `#${sp.cueIndex + 1}`).join('、')}）`
+                  : ''
+              }`}
+            >
               「{s.match}」被 {s.ruleName} 命中，已按优先级并入 {s.winnerRuleName}
+              {s.spans.length > 1 && <em className="suppressed-cross">跨cue</em>}
             </span>
           ))}
         </div>
@@ -131,6 +178,8 @@ export function Preview({
   const [onlyMatched, setOnlyMatched] = useState(false);
   /** 残留防线「定位」闪烁的 cue 序号 */
   const [flashCue, setFlashCue] = useState<number | null>(null);
+  /** 悬停的跨 cue 命中 key：所有涉及 cue 的同一命中联动高亮 */
+  const [linkedKey, setLinkedKey] = useState<string | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cues = useMemo(() => {
@@ -215,6 +264,8 @@ export function Preview({
             key={c.index}
             cue={c}
             flash={flashCue === c.index}
+            linkedKey={linkedKey}
+            onHoverHit={setLinkedKey}
             onToggleHit={onToggleHit}
             onClearException={onClearException}
           />

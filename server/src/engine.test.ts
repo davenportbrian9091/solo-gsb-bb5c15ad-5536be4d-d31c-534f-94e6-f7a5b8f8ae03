@@ -4,10 +4,13 @@ import {
   autoAliasFor,
   buildFinalText,
   buildPreview,
+  buildScanWindows,
   exportResult,
   normalizeEntity,
+  normalizeRule,
   plainText,
   SafetyScanBlockedError,
+  timeToMs,
 } from './engine';
 import { PRESETS, SAMPLE_VTT } from './presets';
 import { migrateJobState } from './store';
@@ -182,6 +185,8 @@ test('稳定化名：NFKC 与首尾空白规范化实体键', () => {
     enabled: true,
     mode: 'alias',
     aliasPrefix: '代号',
+    crossCue: false,
+    maxCueGapMs: 500,
   };
   const vtt = `WEBVTT
 
@@ -260,6 +265,8 @@ test('稳定化名：与模板规则并存，优先级抑制照常', () => {
     enabled: true,
     mode: 'template',
     aliasPrefix: '人物',
+    crossCue: false,
+    maxCueGapMs: 500,
   };
   const alias: MaskRule = {
     id: 'al',
@@ -371,6 +378,8 @@ test('实体决策：NFKC 归一后同实体跨写法继承决定', () => {
     enabled: true,
     mode: 'template',
     aliasPrefix: '',
+    crossCue: false,
+    maxCueGapMs: 500,
   };
   const vtt = 'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n编号 1234 与 １２３４\n';
   const v = buildPreview({
@@ -425,7 +434,7 @@ test('实体决策：审计记录决策来源，导出与预览状态一致', ()
   const recs = ex.audit.records.filter((r) => r.entityKey === '张伟');
   assert.ok(recs.some((r) => r.status === 'applied' && r.decisionSource === 'exception'));
   assert.ok(recs.some((r) => r.status === 'reverted' && r.decisionSource === 'entity'));
-  assert.strictEqual(ex.audit.version, 4);
+  assert.strictEqual(ex.audit.version, 5);
   assert.strictEqual(ex.audit.stats.exceptionHits, 1);
   assert.ok(ex.audit.entityDecisions!.some((d) => d.entityKey === '张伟' && d.action === 'keep'));
   // 导出 VTT 与预览最终状态一致：例外处替换，其余保留
@@ -586,6 +595,8 @@ test('残留防线：被抑制命中随保留复现归为人工保留', () => {
     enabled: true,
     mode: 'template',
     aliasPrefix: '',
+    crossCue: false,
+    maxCueGapMs: 500,
   };
   const vtt = 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n张伟先生到了。\n';
   const v1 = buildPreview({ vtt, rules: [nameRule, wider] });
@@ -616,6 +627,8 @@ test('残留防线：替换产物命中阻断导出并报告来源与目标规�
     enabled: true,
     mode: 'template',
     aliasPrefix: '',
+    crossCue: false,
+    maxCueGapMs: 500,
   };
   const target: MaskRule = {
     id: 't1',
@@ -627,6 +640,8 @@ test('残留防线：替换产物命中阻断导出并报告来源与目标规�
     enabled: true,
     mode: 'template',
     aliasPrefix: '',
+    crossCue: false,
+    maxCueGapMs: 500,
   };
   const vtt = 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n我住在朝阳路5号。\n';
   const v = buildPreview({ vtt, rules: [producer, target] });
@@ -670,6 +685,8 @@ test('残留防线：跨边界新命中阻断导出并列出涉及区间', () =>
     enabled: true,
     mode: 'template',
     aliasPrefix: '',
+    crossCue: false,
+    maxCueGapMs: 500,
   };
   const phone = presetRule('手机号');
   const vtt = 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n电话 138-12345678 已登记。\n';
@@ -699,6 +716,231 @@ test('残留防线：示例字幕默认规则下无残留问题', () => {
   assert.strictEqual(v.safety.blocked, false);
   const ex = exportResult({ vtt: SAMPLE_VTT, rules });
   assert.deepStrictEqual(ex.audit.safetyScan.counts, { kept: 0, artifact: 0, crossBoundary: 0 });
+});
+
+/* ---------------------------- 跨 cue 连续扫描 ---------------------------- */
+
+/** 跨 cue 规则：手机号被两条相邻字幕断开 */
+function crossPhoneRule(override: Partial<MaskRule> = {}): MaskRule {
+  return {
+    id: 'r-cross',
+    name: '手机号-跨字幕',
+    pattern: '(?<!\\d)(1[3-9]\\d)\\d{4}(\\d{4})(?!\\d)',
+    flags: 'g',
+    replacement: '$1****$2',
+    priority: 50,
+    enabled: true,
+    mode: 'template',
+    aliasPrefix: '号码',
+    crossCue: true,
+    maxCueGapMs: 500,
+    ...override,
+  };
+}
+
+const CROSS_VTT = `WEBVTT
+
+c-1
+00:00:01.000 --> 00:00:02.000
+我的手机号是 1381234
+
+c-2
+00:00:02.300 --> 00:00:04.000
+5678，记住了吗？
+`;
+
+test('跨 cue：时间码解析与相邻窗口分组', () => {
+  assert.strictEqual(timeToMs('00:00:02.300'), 2300);
+  assert.strictEqual(timeToMs('00:00:02,300'), 2300);
+  assert.strictEqual(timeToMs('01:02:03.004'), 3723004);
+  assert.strictEqual(timeToMs('02:03.004'), 123004);
+  const cues = [
+    { index: 0, start: '00:00:01.000', end: '00:00:02.000', text: 'ab' },
+    { index: 1, start: '00:00:02.300', end: '00:00:04.000', text: 'cd' },
+    { index: 2, start: '00:00:06.000', end: '00:00:07.000', text: 'ef' },
+  ];
+  const wins = buildScanWindows(cues, 500);
+  assert.strictEqual(wins.length, 2, '间隔 2000ms 的第 3 条应自成窗口');
+  assert.deepStrictEqual(wins[0].cueIndexes, [0, 1]);
+  assert.strictEqual(wins[0].text, 'abcd');
+  assert.deepStrictEqual(
+    wins[0].loc.map((l) => [l.cue, l.off]),
+    [
+      [0, 0],
+      [0, 1],
+      [1, 0],
+      [1, 1],
+    ],
+  );
+  // 间隔恰等于阈值也算相邻
+  assert.strictEqual(buildScanWindows(cues, 2000).length, 1);
+});
+
+test('跨 cue：断开的手机号命中，替换写入首条、后续字符删除、时间标识保留', () => {
+  const rule = crossPhoneRule();
+  const v = buildPreview({ vtt: CROSS_VTT, rules: [rule] });
+  assert.strictEqual(v.totalHits, 1, '跨 cue 命中只计一次');
+  assert.strictEqual(v.appliedHits, 1);
+  const hit = v.cues[0].hits[0];
+  assert.strictEqual(hit.match, '13812345678');
+  assert.strictEqual(hit.replacement, '138****5678');
+  assert.deepStrictEqual(
+    hit.spans.map((s) => [s.cueIndex, s.start, s.end]),
+    [
+      [0, 7, 13],
+      [1, 0, 3],
+    ],
+  );
+  // 同一命中挂在所有涉及 cue 上（预览联动高亮 / 撤销共用同一命中键）
+  assert.strictEqual(v.cues[1].hits.length, 1);
+  assert.strictEqual(v.cues[1].hits[0].key, hit.key);
+  assert.ok(hit.key.includes('+'), '跨 cue 命中键编码全部涉及区间');
+
+  const ex = exportResult({ vtt: CROSS_VTT, rules: [rule] });
+  assert.ok(ex.vtt.includes('我的手机号是 138****5678'), '替换写入首条 cue');
+  assert.ok(ex.vtt.includes('，记住了吗？'), '后续 cue 被覆盖字符删除、未命中文字保留');
+  assert.ok(!ex.vtt.includes('5678，'), '被覆盖字符已删除');
+  assert.ok(ex.vtt.includes('c-1') && ex.vtt.includes('c-2'), 'cue 标识保留');
+  assert.ok(
+    ex.vtt.includes('00:00:01.000 --> 00:00:02.000') &&
+      ex.vtt.includes('00:00:02.300 --> 00:00:04.000'),
+    '各 cue 时间原样保留',
+  );
+  // 审计：同一命中键 + 涉及 cue 列表
+  const rec = ex.audit.records.find((r) => r.status === 'applied')!;
+  assert.strictEqual(rec.key, hit.key);
+  assert.deepStrictEqual(rec.cueIndexes, [0, 1]);
+  assert.strictEqual(rec.source.text, '13812345678');
+  // 替换后候选文本无残留
+  assert.strictEqual(ex.audit.safetyScan.blocked, false);
+});
+
+test('跨 cue：间隔超过阈值不命中，调大阈值后命中', () => {
+  const farVtt = CROSS_VTT.replace('00:00:02.300', '00:00:03.000'); // 间隔 1000ms
+  const v1 = buildPreview({ vtt: farVtt, rules: [crossPhoneRule()] });
+  assert.strictEqual(v1.totalHits, 0, '间隔 1000ms 超过默认 500ms，不组成窗口');
+  const v2 = buildPreview({
+    vtt: farVtt,
+    rules: [crossPhoneRule({ maxCueGapMs: 1500 })],
+  });
+  assert.strictEqual(v2.totalHits, 1, '调大阈值后同一敏感串命中');
+  assert.strictEqual(v2.cues[0].hits[0].match, '13812345678');
+});
+
+test('跨 cue：与单 cue 命中统一按优先级 / 长度消解重叠', () => {
+  const tail: MaskRule = {
+    id: 'r-tail',
+    name: '尾号',
+    pattern: '5678，',
+    flags: 'g',
+    replacement: '***',
+    priority: 90,
+    enabled: true,
+    mode: 'template',
+    aliasPrefix: '',
+    crossCue: false,
+    maxCueGapMs: 500,
+  };
+  // 单 cue 高优先级命中与跨 cue 命中在第二条字幕重叠 → 跨 cue 命中被抑制
+  const v1 = buildPreview({ vtt: CROSS_VTT, rules: [crossPhoneRule(), tail] });
+  assert.strictEqual(v1.totalHits, 1);
+  assert.strictEqual(v1.cues[1].hits[0].ruleId, 'r-tail');
+  assert.strictEqual(v1.suppressedHits, 1);
+  const sup = v1.cues[0].suppressed[0];
+  assert.strictEqual(sup.ruleId, 'r-cross');
+  assert.strictEqual(sup.winnerRuleId, 'r-tail');
+  assert.deepStrictEqual(
+    sup.spans.map((s) => s.cueIndex),
+    [0, 1],
+    '被抑制的跨 cue 命中记录全部涉及 cue',
+  );
+  // 反转优先级：跨 cue 命中胜出，单 cue 命中被抑制
+  const v2 = buildPreview({
+    vtt: CROSS_VTT,
+    rules: [crossPhoneRule({ priority: 95 }), tail],
+  });
+  assert.strictEqual(v2.cues[0].hits[0].ruleId, 'r-cross');
+  assert.ok(v2.cues[1].suppressed.some((s) => s.ruleId === 'r-tail'));
+});
+
+test('跨 cue：逐条撤销联动所有涉及 cue，残留防线记为人工保留', () => {
+  const rule = crossPhoneRule();
+  const v1 = buildPreview({ vtt: CROSS_VTT, rules: [rule] });
+  const key = v1.cues[0].hits[0].key;
+  const v2 = buildPreview({ vtt: CROSS_VTT, rules: [rule], revertedKeys: [key] });
+  assert.strictEqual(v2.revertedHits, 1);
+  // 两个 cue 上的同一命中都为撤销态
+  assert.ok(v2.cues[0].hits[0].reverted);
+  assert.ok(v2.cues[1].hits[0].reverted);
+  assert.strictEqual(v2.cues[1].hits[0].key, key);
+  // 残留防线：跨 cue 窗口二次扫描发现保留的完整号码 → 人工保留（仅提示）
+  assert.strictEqual(v2.safety.blocked, false);
+  assert.strictEqual(v2.safety.kept, 1);
+  const issue = v2.safety.issues[0];
+  assert.strictEqual(issue.kind, 'kept');
+  assert.strictEqual(issue.match, '13812345678');
+  assert.deepStrictEqual(issue.cueIndexes, [0, 1]);
+  assert.deepStrictEqual(
+    issue.segments.map((s) => [s.cueIndex, s.source]),
+    [
+      [0, 'reverted'],
+      [1, 'reverted'],
+    ],
+  );
+  // 导出恢复两条 cue 原文
+  const ex = exportResult({ vtt: CROSS_VTT, rules: [rule], revertedKeys: [key] });
+  assert.ok(ex.vtt.includes('1381234'));
+  assert.ok(ex.vtt.includes('5678，'));
+  const rec = ex.audit.records.find((r) => r.status === 'reverted')!;
+  assert.strictEqual(rec.key, key);
+  assert.deepStrictEqual(rec.cueIndexes, [0, 1]);
+});
+
+test('跨 cue：实体决定与稳定化名沿用同一命中键', () => {
+  const aliasRule = crossPhoneRule({ mode: 'alias', replacement: '', aliasPrefix: '号码' });
+  const v1 = buildPreview({ vtt: CROSS_VTT, rules: [aliasRule] });
+  const hit = v1.cues[0].hits[0];
+  assert.strictEqual(hit.alias, '号码1');
+  assert.strictEqual(hit.replacement, '号码1');
+  assert.strictEqual(hit.entityKey, '13812345678');
+  const ex = exportResult({ vtt: CROSS_VTT, rules: [aliasRule] });
+  assert.ok(ex.vtt.includes('我的手机号是 号码1'), '化名写入首条 cue');
+  assert.ok(ex.vtt.includes('，记住了吗？'), '后续 cue 被覆盖字符删除');
+
+  // 实体「始终保留」决定作用于跨 cue 命中（同一实体键）
+  const decisions: EntityDecision[] = [
+    { ruleId: aliasRule.id, entityKey: '13812345678', action: 'keep', decidedAt: '2026-09-19T00:00:00.000Z' },
+  ];
+  const v2 = buildPreview({ vtt: CROSS_VTT, rules: [aliasRule], entityDecisions: decisions });
+  assert.ok(v2.cues[0].hits[0].reverted && v2.cues[0].hits[0].decisionSource === 'entity');
+  assert.ok(v2.cues[1].hits[0].reverted, '同一命中在后续 cue 同步保留');
+  assert.strictEqual(v2.safety.kept, 1, '保留的跨 cue 号码归为人工保留');
+});
+
+test('跨 cue：单 cue 命中键保持历史格式，例外状态兼容恢复', () => {
+  const rules = [presetRule('手机号')];
+  const v = buildPreview({ vtt: SAMPLE_VTT, rules });
+  const key = v.cues[0].hits[0].key;
+  assert.match(key, /^\d+:\d{2}:\d{2}:\d{2}[.,]\d{3}:\d+-\d+:.+$/, '单 cue 命中键格式不变');
+  assert.ok(!key.includes('+'));
+  const rec = exportResult({ vtt: SAMPLE_VTT, rules }).audit.records.find(
+    (r) => r.status === 'applied',
+  )!;
+  assert.strictEqual(rec.key, key);
+  assert.deepStrictEqual(rec.cueIndexes, [0]);
+});
+
+test('跨 cue：旧规则缺少跨 cue 字段时按默认补齐', () => {
+  const legacy = presetRule('手机号') as unknown as Record<string, unknown>;
+  delete legacy.crossCue;
+  delete legacy.maxCueGapMs;
+  const n = normalizeRule(legacy as unknown as MaskRule);
+  assert.strictEqual(n.crossCue, false);
+  assert.strictEqual(n.maxCueGapMs, 500);
+  const n2 = normalizeRule({ ...n, crossCue: true, maxCueGapMs: -5 });
+  assert.strictEqual(n2.maxCueGapMs, 500, '非法间隔回退默认');
+  const n3 = normalizeRule({ ...n, crossCue: true, maxCueGapMs: 800.6 });
+  assert.strictEqual(n3.maxCueGapMs, 801, '间隔取整');
 });
 
 console.log(`\n引擎自测全部通过（${passed} 项）`);

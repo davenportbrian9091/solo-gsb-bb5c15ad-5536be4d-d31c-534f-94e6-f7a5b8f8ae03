@@ -24,6 +24,8 @@ export const PRESETS: Preset[] = [
       enabled: true,
       mode: 'template',
       aliasPrefix: '号码',
+      crossCue: false,
+      maxCueGapMs: 500,
     },
   },
   {
@@ -38,6 +40,8 @@ export const PRESETS: Preset[] = [
       enabled: false,
       mode: 'template',
       aliasPrefix: '号码',
+      crossCue: false,
+      maxCueGapMs: 500,
     },
   },
   {
@@ -52,6 +56,8 @@ export const PRESETS: Preset[] = [
       enabled: true,
       mode: 'template',
       aliasPrefix: '邮箱',
+      crossCue: false,
+      maxCueGapMs: 500,
     },
   },
   {
@@ -66,6 +72,8 @@ export const PRESETS: Preset[] = [
       enabled: true,
       mode: 'template',
       aliasPrefix: '证件',
+      crossCue: false,
+      maxCueGapMs: 500,
     },
   },
   {
@@ -80,6 +88,8 @@ export const PRESETS: Preset[] = [
       enabled: true,
       mode: 'template',
       aliasPrefix: '卡号',
+      crossCue: false,
+      maxCueGapMs: 500,
     },
   },
   {
@@ -94,6 +104,8 @@ export const PRESETS: Preset[] = [
       enabled: false,
       mode: 'template',
       aliasPrefix: '链接',
+      crossCue: false,
+      maxCueGapMs: 500,
     },
   },
   {
@@ -109,6 +121,8 @@ export const PRESETS: Preset[] = [
       enabled: true,
       mode: 'template',
       aliasPrefix: '人物',
+      crossCue: false,
+      maxCueGapMs: 500,
     },
   },
   {
@@ -125,6 +139,25 @@ export const PRESETS: Preset[] = [
       enabled: false,
       mode: 'alias',
       aliasPrefix: '人物',
+      crossCue: false,
+      maxCueGapMs: 500,
+    },
+  },
+  {
+    name: '手机号（跨字幕连续扫描）',
+    description:
+      '手机号被两条相邻字幕断开时也能命中：间隔不超过 800ms 的相邻字幕拼成扫描窗口；替换写入首条字幕，后续字幕中被覆盖字符删除',
+    rule: {
+      name: '手机号-跨字幕',
+      pattern: '(?<!\\d)(1[3-9]\\d)\\d{4}(\\d{4})(?!\\d)',
+      flags: 'g',
+      replacement: '$1****$2',
+      priority: 50,
+      enabled: false,
+      mode: 'template',
+      aliasPrefix: '号码',
+      crossCue: true,
+      maxCueGapMs: 800,
     },
   },
 ];

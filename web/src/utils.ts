@@ -4,12 +4,22 @@ export function uid(prefix = 'rule'): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** 兼容旧版本规则：补齐稳定化名所需字段 */
+/** 跨 cue 连续扫描的默认最大相邻间隔（毫秒），与服务端一致 */
+export const DEFAULT_MAX_CUE_GAP_MS = 500;
+
+/** 兼容旧版本规则：补齐稳定化名 / 跨 cue 连续扫描所需字段 */
 export function normalizeRule(rule: MaskRule): MaskRule {
   return {
     ...rule,
     mode: rule.mode === 'alias' ? 'alias' : 'template',
     aliasPrefix: typeof rule.aliasPrefix === 'string' ? rule.aliasPrefix : '',
+    crossCue: rule.crossCue === true,
+    maxCueGapMs:
+      typeof rule.maxCueGapMs === 'number' &&
+      Number.isFinite(rule.maxCueGapMs) &&
+      rule.maxCueGapMs >= 0
+        ? Math.round(rule.maxCueGapMs)
+        : DEFAULT_MAX_CUE_GAP_MS,
   };
 }
 

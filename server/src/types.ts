@@ -22,6 +22,13 @@ export interface MaskRule {
   mode: RuleMode;
   /** 化名模式前缀，如「人物」→ 人物1 / 人物2；为空时使用「化名」 */
   aliasPrefix: string;
+  /**
+   * 跨 cue 连续扫描：开启后把时间相邻（间隔 ≤ maxCueGapMs）的 cue 纯文本
+   * 直接拼接成扫描窗口，被两条字幕断开的敏感串也能命中
+   */
+  crossCue: boolean;
+  /** 跨 cue 模式的最大相邻间隔毫秒数（下一条开始时间 − 上一条结束时间） */
+  maxCueGapMs: number;
 }
 
 /**
@@ -73,17 +80,26 @@ export interface HitException {
   state: 'applied' | 'reverted';
 }
 
+/** 命中在某条 cue 纯文本中的覆盖区间（跨 cue 命中按 cue 顺序排列） */
+export interface HitSpan {
+  /** 涉及 cue 的序号 */
+  cueIndex: number;
+  /** 在该 cue 纯文本中的起止偏移（end 含） */
+  start: number;
+  end: number;
+}
+
 /** 合并后落到某条字幕上的命中 */
 export interface Hit {
-  /** 稳定标识：cue 序号 + 原文区间 + 规则 id，例外状态据此恢复 */
+  /** 稳定标识：cue 序号 + 时间 + 原文区间 + 规则 id，例外状态据此恢复 */
   key: string;
   ruleId: string;
   ruleName: string;
   priority: number;
-  /** 在 cue 纯文本中的起止偏移（含） */
+  /** 在锚定 cue（spans 首个涉及 cue）纯文本中的起止偏移（含） */
   start: number;
   end: number;
-  /** 原文区间 */
+  /** 原文区间（跨 cue 命中为各 cue 覆盖文本的拼接） */
   match: string;
   replacement: string;
   /** true 表示最终状态为保留原文（撤销 / 实体保留决定） */
@@ -94,6 +110,11 @@ export interface Hit {
   entityKey: string;
   /** 化名模式：最终化名 */
   alias?: string;
+  /**
+   * 涉及的全部 cue 及各自覆盖区间（按 cue 顺序；单 cue 命中为单元素）。
+   * 应用时替换文本写入首个 cue，后续 cue 中被覆盖字符删除。
+   */
+  spans: HitSpan[];
 }
 
 /** 被更高优先级 / 更长命中吞并的重叠命中，仅用于审计 */
@@ -101,6 +122,7 @@ export interface SuppressedHit {
   ruleId: string;
   ruleName: string;
   priority: number;
+  /** 在锚定 cue（首个涉及 cue）纯文本中的起止偏移（含） */
   start: number;
   end: number;
   match: string;
@@ -109,6 +131,8 @@ export interface SuppressedHit {
   winnerRuleName: string;
   /** 被抑制命中的实体键（不参与编号分配，也不受实体决定影响） */
   entityKey: string;
+  /** 涉及的全部 cue 及各自覆盖区间（跨 cue 命中被抑制时多于一个） */
+  spans: HitSpan[];
 }
 
 export interface CueHit {
@@ -171,16 +195,21 @@ export interface SafetyScanSegment {
   ruleName?: string;
   /** 片段文本 */
   text: string;
+  /** 跨 cue 二次命中时标注片段所属 cue（单 cue 命中省略） */
+  cueIndex?: number;
 }
 
 /** 二次扫描发现的一条问题（可定位到 cue 与文本区间） */
 export interface SafetyScanIssue {
+  /** 锚定 cue（首个涉及 cue）序号 */
   cueIndex: number;
   cueId: string;
   time: { start: string; end: string };
+  /** 涉及的全部 cue 序号（跨 cue 二次命中时多于一个） */
+  cueIndexes: number[];
   /** 二次命中的规则（目标规则） */
   rule: { id: string; name: string };
-  /** 在候选导出 cue 纯文本中的区间（不含 end） */
+  /** 在锚定 cue 候选导出纯文本中的区间（不含 end） */
   start: number;
   end: number;
   match: string;
@@ -235,15 +264,20 @@ export interface PreviewInput {
 }
 
 export interface AuditRecord {
+  /** 锚定 cue（首个涉及 cue）序号 */
   cueIndex: number;
   cueId: string;
   time: { start: string; end: string };
+  /** 涉及的全部 cue 序号（跨 cue 命中多于一个；与预览命中 key 对应） */
+  cueIndexes: number[];
   rule: { id: string; name: string; priority: number };
-  /** 原文区间（含纯文本偏移） */
+  /** 原文区间（锚定 cue 纯文本偏移；跨 cue 命中为首个 cue 内部分） */
   source: { start: number; end: number; text: string };
-  /** 替换结果 */
+  /** 替换结果（写入锚定 cue；后续 cue 被覆盖字符删除） */
   replacement: string;
   status: 'applied' | 'reverted' | 'suppressed';
+  /** 与预览 / 例外一致的稳定命中键（被抑制命中无此字段） */
+  key?: string;
   /** 被抑制时的胜出规则 */
   suppressedBy?: { id: string; name: string };
   /** 实体键（NFKC + trim 后的原文） */

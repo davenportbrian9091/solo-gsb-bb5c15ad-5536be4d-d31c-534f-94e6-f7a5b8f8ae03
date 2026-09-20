@@ -453,6 +453,73 @@ select:focus {
   color: var(--suppressed);
 }
 
+/* ---------------- 跨 cue 连续扫描 ---------------- */
+.mode-badge.mode-cross {
+  background: #cffafe;
+  color: #0e7490;
+}
+
+.rule-cross {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.rule-cross-gap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.rule-cross-gap input {
+  width: 90px;
+}
+.rule-cross-hint {
+  margin: 0;
+}
+
+.hit-cross {
+  border-style: dashed;
+}
+.hit-cross-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 7px;
+  line-height: 1.6;
+  background: #cffafe;
+  color: #0e7490;
+}
+/* 悬停任一涉及 cue 的命中片段时，同一命中在所有 cue 联动高亮 */
+.hit-linked {
+  outline: 2px solid #06b6d4;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.18);
+}
+/* 跨 cue 命中在非锚定 cue 的部分：字符将被删除（替换写入首条 cue） */
+.hit-cross-tail {
+  color: #0e7490;
+  text-decoration: line-through dashed rgba(14, 116, 144, 0.6);
+  font-weight: 600;
+}
+
+.suppressed-cross {
+  font-style: normal;
+  font-weight: 700;
+  margin-left: 4px;
+  color: #0e7490;
+}
+
+.safety-cross-tag {
+  font-size: 10.5px;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 1px 7px;
+  background: #cffafe;
+  color: #0e7490;
+}
+
 /* ---------------- 实体决策 ---------------- */
 .entity-filters {
   display: flex;

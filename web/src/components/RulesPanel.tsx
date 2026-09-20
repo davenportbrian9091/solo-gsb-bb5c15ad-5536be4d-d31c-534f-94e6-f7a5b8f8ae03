@@ -25,6 +25,8 @@ export function RulesPanel({ rules, presets, onChange }: Props) {
       enabled: true,
       mode: 'template',
       aliasPrefix: '化名',
+      crossCue: false,
+      maxCueGapMs: 500,
     };
     onChange([...rules, r]);
     setOpenId(r.id);
@@ -94,6 +96,14 @@ export function RulesPanel({ rules, presets, onChange }: Props) {
                   {r.mode === 'alias' && (
                     <span className="mode-badge mode-alias" title="稳定化名模式">
                       化名
+                    </span>
+                  )}
+                  {r.crossCue && (
+                    <span
+                      className="mode-badge mode-cross"
+                      title={`跨 cue 连续扫描：相邻间隔 ≤ ${r.maxCueGapMs}ms 的字幕拼成扫描窗口`}
+                    >
+                      跨cue
                     </span>
                   )}
                   {err && <span className="rule-err-dot" title={err}>!</span>}
@@ -180,6 +190,37 @@ export function RulesPanel({ rules, presets, onChange }: Props) {
                         onChange={(e) => update(r.id, { replacement: e.target.value })}
                       />
                     </label>
+                  )}
+                  <div className="rule-cross">
+                    <label className={`mode-option ${r.crossCue ? 'active' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={r.crossCue}
+                        onChange={(e) => update(r.id, { crossCue: e.target.checked })}
+                      />
+                      跨 cue 连续扫描
+                    </label>
+                    {r.crossCue && (
+                      <label className="rule-cross-gap">
+                        最大间隔（毫秒）
+                        <input
+                          type="number"
+                          min={0}
+                          step={100}
+                          value={r.maxCueGapMs}
+                          onChange={(e) =>
+                            update(r.id, { maxCueGapMs: Number(e.target.value) })
+                          }
+                        />
+                      </label>
+                    )}
+                  </div>
+                  {r.crossCue && (
+                    <p className="hint rule-cross-hint">
+                      开启后：间隔不超过 {r.maxCueGapMs}ms 的相邻字幕会拼成扫描窗口，
+                      被两条字幕断开的敏感串也能命中；替换文本写入首条字幕，
+                      后续字幕中被覆盖的字符删除（时间轴与各 cue 标识保持原样）。
+                    </p>
                   )}
                 </div>
               )}
